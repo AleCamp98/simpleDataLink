@@ -27,6 +27,7 @@ A serial line is represented by a serial_line_handle structure, this needs to be
 
 ## Frame send/receive functions
 Finally, the library can be used with sdlSend() and sdlReceive() functions, those will handle everything, from frame creation/extraction to CRC creation/verification, byte stuffing and I/O on the line. The maximum payload length can be defined with the SDL_MAX_PAY_LEN macro.
+An example of usage of the library is provided in examples/communicationExample.c
 
 
 
