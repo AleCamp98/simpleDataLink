@@ -2,7 +2,6 @@
 sources=src/simpleDataLink.c \
 lib/bufferUtils/src/bufferUtils.c \
 lib/frameUtils/src/frameUtils.c
-
 vpath %.c $(dir $(sources))
 #objects
 objects=$(addprefix $(builddir)/,$(notdir $(sources:.c=.o)))
@@ -18,7 +17,6 @@ compflags=-Wall
 all: $(objects)
 
 $(builddir)/%.o: %.c | $(builddir)
-	echo $(objects)
 	$(CC) $(compflags) -o $@ -c $< $(includes)
 
 example: examples/communicationExample.c $(objects) | $(builddir)
