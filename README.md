@@ -30,5 +30,5 @@ Finally, the library can be used with sdlSend() and sdlReceive() functions, thos
 An example of usage of the library is provided in examples/communicationExample.c
 
 ## compile instructions
-The source code can be compiled into object files by running **make** on the root directory, by default this will compile all sources into object files on the **build** folder, to compile the example you can instead call **make example**, again this will compile the example executable on the **build** folder.
+The source code can be compiled into a static library (simpleDataLink.a) by running **make** on the root directory, by default this will compile all sources into object files on the **build** folder and then pack them in the static library, to compile the example you can instead call **make example**, again this will compile the example executable on the **build** folder.
 You can change the build folder or compiler flags (default **-Wall**) by passing variables to make like **make builddir=newbuilddirectory compflags=newcompilerflags**

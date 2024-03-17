@@ -14,14 +14,15 @@ builddir=build
 #compiler flags
 compflags=-Wall
 
-all: $(objects)
+$(builddir)/simpleDataLink.a: $(objects) | $(builddir)
+	$(AR) rcs $(builddir)/simpleDataLink.a $(objects)
 
 $(builddir)/%.o: %.c | $(builddir)
 	$(CC) $(compflags) -o $@ -c $< $(includes)
 
-example: examples/communicationExample.c $(objects) | $(builddir)
+example: examples/communicationExample.c $(builddir)/simpleDataLink.a | $(builddir)
 	$(CC) $(compflags) -o $(builddir)/communicationExample.o -c $< $(includes)
-	$(CC) -o $(builddir)/communicationExample $(builddir)/communicationExample.o $(objects) $(includes)
+	$(CC) -o $(builddir)/communicationExample $(builddir)/communicationExample.o $(builddir)/simpleDataLink.a
 
 $(builddir):
 	mkdir $@
