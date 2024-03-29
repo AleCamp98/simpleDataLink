@@ -359,6 +359,9 @@ uint8_t sdlSend(serial_line_handle* line, uint8_t* buff, uint32_t len){
 uint32_t sdlReceive(serial_line_handle* line, uint8_t* buff, uint32_t len){
     if(line==NULL || line->rxFunc==NULL) return 0;
 
+    //initializing temporary circular buffer
+    cBuffInit(&tmpBuff,tmpArray,sizeof(tmpArray),0);
+
     //fill the rxBuffer with new bytes
     uint8_t byte;
     while(!cBuffFull(&line->rxBuff)){
