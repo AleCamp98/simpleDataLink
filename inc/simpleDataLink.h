@@ -31,7 +31,7 @@ typedef struct{
  * (frame header and CRC excluded).
  * 
  */
-#define SDL_MAX_PAY_LEN 15
+#define SDL_MAX_PAY_LEN 128
 
 /**
  * @brief Macro which enables anti lock feature and defines its depth
@@ -45,7 +45,7 @@ typedef struct{
  * buffer of SDL_MAX_PAY_LEN * SDL_ANTILOCK_DEPTH bytes so enable only if
  * needed.
  */
-#define SDL_ANTILOCK_DEPTH 10
+#define SDL_ANTILOCK_DEPTH 5
 
 /**
  * @brief Macro which enables the ____sdlTestSendCallback() function
@@ -54,7 +54,7 @@ typedef struct{
  * to debug the library in a single thread.
  * 
  */
-#define SDL_DEBUG 
+//#define SDL_DEBUG 
 
 /**
  * @brief Struct containing transmission and reception functions of the serial
