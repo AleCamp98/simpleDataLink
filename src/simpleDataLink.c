@@ -13,20 +13,23 @@
 #define CRC_POLY 0x1021 //16 bit crc polynomial
 #define CRC_INITIAL 0xFFFF //16 bit crc initial value
 
+#define FRMCODE_DATA 0x00//code for data frame
+#define FRMCODE_ACK 0x01//code for acknowledge frame
+
 //temporary circular buffer to handle tx/rx frame
 circular_buffer_handle tmpBuff;
-//temporary circular buffer memory region
-uint8_t tmpArray[SDL_MAX_PAY_LEN*2+6];
+//counter used to generate unique hashes for identical frames
+uint16_t hashCnt=0;
 
 //rules for frame search
 const uint8_t headTail=FRAME_FLAG;
 search_frame_rule rule={
-	.head=(uint8_t *)&headTail,	
+	.head=(uint8_t *)&headTail, //default to dataHead, but needs to be changed to search for ack	
 	.headLen=1,
 	.tail=(uint8_t *)&headTail,	
 	.tailLen=1,
-	.minLen=0,
-	.maxLen=SDL_MAX_PAY_LEN*2+4,
+	.minLen=1,
+	.maxLen=(SDL_MAX_PAY_LEN+2)*2,
 	.policy=hard,
 };
 
@@ -41,7 +44,6 @@ void num16ToNet(uint8_t net[2], uint16_t num){
 uint16_t netToNum16(uint8_t net[2]){
     return ((uint16_t)net[0]<<8) | ((uint16_t)net[1]);
 }
-
 
 // STUFFING -------------------------------------------------------------------
 
@@ -114,7 +116,7 @@ uint8_t undoByteStuffing(circular_buffer_handle* data){
     return 1;
 }
 
-// CRC ------------------------------------------------------------------------
+// CRC/HASH -------------------------------------------------------------------
 
 /*
 //this function can be used to verify other CRC implementations
@@ -233,6 +235,16 @@ uint8_t removeVerifyCRC(circular_buffer_handle* data){
     return 0;
 }
 
+/* this function computes an hash starting from a buffer of data
+ * right now it simply returns the value of the hash counter to
+ * generate the hash, it can be modified to implement more robust
+ * types of hashes but in our case we will only use it to identify
+ * frames uniquely for acknowledges so it should be good enough
+ */
+uint16_t computeHash(uint8_t * hashData, uint32_t dataLen){
+    return ++hashCnt;
+}
+
 // FRAME/DEFRAME FUNCTIONS ----------------------------------------------------
 
 /*
@@ -321,46 +333,51 @@ uint8_t deframe(circular_buffer_handle * frame){
     return 1;
 }
 
-// SIMPLE DATA LINK FUNCTIONS -------------------------------------------------
-
-void sdlInitLine(serial_line_handle* line, uint8_t (*txFunc)(uint8_t byte), uint8_t (*rxFunc)(uint8_t* byte)){
-    if(line==NULL) return;
-
-    line->txFunc=txFunc;
-    line->rxFunc=rxFunc;
-    cBuffInit(&line->rxBuff,line->rxBuffArray,sizeof(line->rxBuffArray),0);
-}
-
-uint8_t sdlSend(serial_line_handle* line, uint8_t* buff, uint32_t len){
+// BASIC I/O FUNCTIONS --------------------------------------------------------
+//sends a frame on line txBuff
+uint8_t sendFrame(serial_line_handle* line, uint8_t frameCode, uint8_t ackWanted, uint16_t hash, uint8_t* buff, uint32_t len){
     if(line==NULL || line->txFunc==NULL) return 0;
 
     if(len>SDL_MAX_PAY_LEN) return 0;
 
     //initializing temporary circular buffer
-    cBuffInit(&tmpBuff,tmpArray,sizeof(tmpArray),0);
+    cBuffInit(&line->tmpBuff,line->tmpBuffArray,sizeof(line->tmpBuffArray),0);
 
-    //copying buffer inside circular buffer
-    if(cBuffPushToFill(&tmpBuff,buff,len,1)!=len) return 0;
+    //creating frameHeader
+    frameHeader header={
+        .code=frameCode,
+        .ackWanted=ackWanted,
+        .hash=hash
+    };
+
+    //copying header inside circular buffer
+    if(cBuffPushToFill(&line->tmpBuff,(uint8_t *)&header,sizeof(frameHeader),1)!=sizeof(frameHeader)) return 0;
+
+    //copying data inside circular buffer
+    if(buff!=NULL) if(cBuffPushToFill(&line->tmpBuff,buff,len,1)!=len) return 0;
 
     //framing the payload
-    if(!frame(&tmpBuff)) return 0;
+    if(!frame(&line->tmpBuff)) return 0;
 
     //sending the payload through the line
     uint8_t byte;
-    while(cBuffPull(&tmpBuff,&byte,1,0)){
+    while(cBuffPull(&line->tmpBuff,&byte,1,0)){
         //if the transmission fails, return 0
         if(!line->txFunc(byte)) return 0;
     }
-
+ 
     return 1;
-    
 }
 
-uint32_t sdlReceive(serial_line_handle* line, uint8_t* buff, uint32_t len){
+//receives a frame from line rxBuff, searching for a certain frameCode, if some remCodes are specified (not NULL or empty)
+//it also removes those codes from rxBuff, otherwise it leaves them unchanged
+//the eventually received frame will be placed inside line tmpBuff (HEADER INCLUDED!)
+//returns 0 if no frame found, !0 otherwise
+uint8_t receiveFrame(serial_line_handle* line, uint8_t frameCode, circular_buffer_handle* remCodes){
     if(line==NULL || line->rxFunc==NULL) return 0;
 
     //initializing temporary circular buffer
-    cBuffInit(&tmpBuff,tmpArray,sizeof(tmpArray),0);
+    cBuffInit(&line->tmpBuff,line->tmpBuffArray,sizeof(line->tmpBuffArray),0);
 
     //fill the rxBuffer with new bytes
     uint8_t byte;
@@ -370,37 +387,244 @@ uint32_t sdlReceive(serial_line_handle* line, uint8_t* buff, uint32_t len){
         }else break;
     }
    
-    //search a possible frame inside rx buffer
-    circular_buffer_handle tmpHandle;
-    //we use while so we will continue until we found the first valid frame or no frame
-    while(searchFrameAdvance(&line->rxBuff,&tmpHandle,&rule,SHIFTOUT_FULL | SHIFTOUT_NEXT | SHIFTOUT_FAST)){
-
+    //handle to store found frames
+    circular_buffer_handle frameHandle;
+    //dummy buffer to perform buffer advancement
+    circular_buffer_handle dummyBuff;
+    //copying rxBuff into dummy buffer
+    cBuffToCirc(&dummyBuff,&line->rxBuff);
+    //we search on dummy handle, shifting it out to current found frame
+    while(searchFrameAdvance(&dummyBuff,&frameHandle,&rule,SHIFTOUT_NEXT | SHIFTOUT_FAST)){
         //flush tmp buffer
-        cBuffFlush(&tmpBuff);
-        //push on temporary buffer
-        uint8_t byte;
-        while(cBuffPull(&tmpHandle,&byte,1,0)){
-            cBuffPush(&tmpBuff,&byte,1,1);
-        }
+        cBuffFlush(&line->tmpBuff);
+        //copy on temporary buffer
+        cBuffPushRead(&line->tmpBuff,&frameHandle,frameHandle.elemNum,1,0);
         //try deframing
-        if(!deframe(&tmpBuff)) continue;
+        if(!deframe(&line->tmpBuff)) continue;
 
-        //check the maximum payload length
-        if(tmpBuff.elemNum>SDL_MAX_PAY_LEN) continue;
-        //if everything succesfull, copy on output buffer
-        cBuffInit(&tmpHandle,buff,len,0); //creating a circular buffer from output buff
-        uint8_t errorFlag=0; //to signal if payload too big for buff
-        while(cBuffPull(&tmpBuff,&byte,1,0)){
-            if(!cBuffPushToFill(&tmpHandle,&byte,1,1)){
-                errorFlag=1;
-                break;
-            };
+        //check if it corresponds to wanted frame code
+        frameHeader tmpHeader;
+        uint8_t toBeCut=0; //flag to signal that frame needs to be cut from rxBuff
+        uint8_t found=0; //frame found flag
+        if(cBuffRead(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0,0)!=sizeof(frameHeader)) continue;
+        if(line->tmpBuff.elemNum>(SDL_MAX_PAY_LEN+sizeof(frameHeader))) continue;
+        if(tmpHeader.code==frameCode){
+            //frame found
+            toBeCut=1;
+            found=1;
+        }else{
+            if(remCodes!=NULL){
+                for(uint32_t c=0; c<remCodes->elemNum; c++){
+                    if(cBuffReadByte(remCodes,0,c)==tmpHeader.hash){
+                        toBeCut=1;
+                        break;
+                    }
+                }
+            }
         }
-        if(errorFlag) continue;
 
-        return tmpHandle.elemNum;
+        if(toBeCut){ //if frame needs to be cut
+            //we cut the found frame from buffers
+            //saving the virtual index of the found frame inside rxBuff
+            uint32_t frameIndx=cBuffGetVirtIndex(&line->rxBuff,frameHandle.startIndex);
+            //cutting found frame from rxBuff
+            cBuffCut(&line->rxBuff,NULL,frameHandle.elemNum,0,frameIndx);
+            //reconstructing dummy buffer
+            cBuffToCirc(&dummyBuff,&line->rxBuff);
+            cBuffPull(&dummyBuff,NULL,frameIndx+1,0);
+        }
+
+        if(found) return 1;
     }
 
     return 0;
 }
 
+//COMPLEX I/O FUNCTIONS -------------------------------------------------------
+
+//receive a frame and eventually acknowledge it
+//returns the length of frame if received, 0 otherwise
+//searches for a frame with code frameCode, and eventually removes remCodes frames from rxBuff (if not NULL or empty)
+//pushes the received code in rxFrame tail, if not NULL, ONLY pushing if there's enough space
+//if there's not enough space to store the frame, the ack is not sent even if requested
+uint32_t receiveFrameAndAck(serial_line_handle* line, circular_buffer_handle* rxFrame, uint8_t frameCode, circular_buffer_handle* remCodes){
+    if(line==NULL || line->rxFunc==NULL) return 0;
+    
+    //if frame received
+    if(receiveFrame(line, frameCode,remCodes)){
+        //get header
+        frameHeader tmpHeader;
+        cBuffPull(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0);
+
+        uint8_t sendAck=1;
+        uint32_t len=line->tmpBuff.elemNum;
+        //verify if the frame was already received
+        if(tmpHeader.hash == line->lastRxHash){
+            len=0; 
+        }else{
+            if(rxFrame!=NULL){
+                //pushing it on buffer (if enough space)
+                if((rxFrame->buffLen-rxFrame->elemNum)>=len){
+                    cBuffPushPull(rxFrame, &line->tmpBuff, len, 1,0);
+                }else sendAck=0;
+            }
+        }
+
+        //send ack back if needed (if ack sending fails it's considered as lost on the line, the frame is received anyway)
+        if(tmpHeader.ackWanted && sendAck){ 
+            sendFrame(line, FRMCODE_ACK, 0, tmpHeader.hash,NULL,0);
+            //saving last acknowledged hash
+            line->lastRxHash=tmpHeader.hash;
+        }
+
+        return len;
+    }
+
+    return 0;
+
+}
+
+//tries receiving a single ack with the given hash
+//to be called multiple times to scan the whole buffer
+uint8_t receiveAck(serial_line_handle* line, uint16_t hash){
+    if(line==NULL || line->rxFunc==NULL) return 0;
+
+    if(receiveFrame(line,FRMCODE_ACK,NULL)){
+        //get header
+        frameHeader tmpHeader;
+        cBuffPull(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0);
+
+        //check if hash correct
+        if(tmpHeader.hash == hash) return 1;
+    }
+
+    return 0;
+
+}
+
+#ifdef SDL_ANTILOCK_DEPTH
+//receives frames placing them inside anti lock queue (and eventually responding with an ack)
+//returns 0 in case of failure, length of frame otherwise
+uint32_t receiveInQueueAndAck(serial_line_handle* line, uint8_t frameCode, circular_buffer_handle* remCodes){
+    if(line==NULL || line->rxFunc==NULL) return 0;
+
+    //check if there's space in antiLockQueue
+    if(line->alockQueue.elemNum==line->alockQueue.buffLen) return 0;
+
+    //otherwise try receiving a frame
+    uint32_t len=receiveFrameAndAck(line,&line->alockBuff, frameCode, remCodes);
+
+    //if frame received
+    if(len){
+        cBuffPush(&line->alockQueue,(uint8_t*)&len,sizeof(line->tmpBuff.elemNum),1);
+    }
+
+    return len;
+}
+
+//reads a frame from anti lock queue
+//returns length of frame, otherwise 0
+//places frame inside rxFrame (if not null), only if there's enough space
+uint32_t readFromQueue(serial_line_handle* line, circular_buffer_handle* rxFrame){
+    if(line==NULL) return 0;
+
+    //check if there are frames in queue
+    uint32_t frameLen=0;
+    cBuffPull(&line->alockQueue,(uint8_t*)&frameLen,sizeof(frameLen),0);
+
+    //read frame from queue
+    if(rxFrame!=NULL){
+        //pushing it on buffer (if enough space)
+        uint32_t len=frameLen;
+        if((rxFrame->buffLen-rxFrame->elemNum)>=len){
+            cBuffPushPull(rxFrame, &line->alockBuff, len, 1,0);
+        }else{
+            //otherwise just discard the frame
+            cBuffPull(&line->alockBuff,NULL,len,0);
+            return 0;
+        }
+    }
+
+    return frameLen;
+}
+#endif
+
+// SIMPLE DATA LINK FUNCTIONS -------------------------------------------------
+void sdlInitLine(serial_line_handle* line, uint8_t (*txFunc)(uint8_t byte), uint8_t (*rxFunc)(uint8_t* byte), uint32_t timeout, uint32_t retries){
+    if(line==NULL) return;
+
+    line->txFunc=txFunc;
+    line->rxFunc=rxFunc;
+    cBuffInit(&line->rxBuff,line->rxBuffArray,sizeof(line->rxBuffArray),0);
+    line->timeout=timeout;
+    line->retries=retries;
+    line->lastRxHash=0;
+    cBuffInit(&line->tmpBuff,line->tmpBuffArray,sizeof(line->tmpBuffArray),0);
+
+#ifdef SDL_ANTILOCK_DEPTH
+    cBuffInit(&line->alockBuff,line->alockBuffArray,sizeof(line->alockBuffArray),0);
+    cBuffInit(&line->alockQueue,line->alockQueueArray,sizeof(line->alockQueueArray),0);
+#endif
+}
+
+uint8_t sdlSend(serial_line_handle* line, uint8_t* buff, uint32_t len, uint8_t ackWanted){
+    if(line==NULL || line->txFunc==NULL || buff==NULL || len==0) return 0;
+
+    if(len>SDL_MAX_PAY_LEN) return 0;
+
+    //generating hash
+    uint16_t hash=computeHash(buff,len);
+
+    //try sending frame
+    uint32_t retryNum=0;
+    do{
+        retryNum++;
+        
+        //send data
+        if(!sendFrame(line,FRMCODE_DATA,ackWanted,hash,buff,len)) continue;
+
+        if(!ackWanted) return 1;
+
+#ifdef SDL_DEBUG
+        __sdlTestSendCallback(line);
+#endif
+
+        //saving starting tick for timeout
+        uint32_t startTick=sdlTimeTick();
+        do{
+            if(receiveAck(line,hash)) return 1;
+
+#ifdef SDL_ANTILOCK_DEPTH
+        //if anti lock active, fill the queue while waiting
+        receiveInQueueAndAck(line,FRMCODE_DATA,NULL);
+#endif
+        }while((sdlTimeTick()-startTick)<=line->timeout);
+
+    }while(retryNum<=line->retries);
+
+    return 0;
+}
+
+uint32_t sdlReceive(serial_line_handle* line, uint8_t* buff, uint32_t len){
+    if(line==NULL || line->rxFunc==NULL) return 0;
+
+    uint32_t retVal=0;
+
+    //temporary cBuffer
+    circular_buffer_handle dummyHandle;
+    cBuffInit(&dummyHandle, buff, len,0);
+
+#ifdef SDL_ANTILOCK_DEPTH
+    //try reading from queue
+    retVal=readFromQueue(line, &dummyHandle);
+    if(retVal) return retVal;
+#endif
+
+    //otherwise try receiving a fresh frame
+    uint8_t remCode[]={FRMCODE_ACK}; //we remove old acks from buffer
+    circular_buffer_handle remCodes;
+    cBuffInit(&remCodes,remCode,sizeof(remCode),sizeof(remCode));
+    retVal=receiveFrameAndAck(line,&dummyHandle,FRMCODE_DATA,&remCodes);
+
+    return retVal;
+}
