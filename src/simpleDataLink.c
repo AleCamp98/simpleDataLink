@@ -350,6 +350,9 @@ uint8_t sendFrame(serial_line_handle* line, uint8_t frameCode, uint8_t ackWanted
         .hash=hash
     };
 
+    //network ordering header
+    num16ToNet((uint8_t*)&header.hash,header.hash);
+
     //copying header inside circular buffer
     if(cBuffPushToFill(&line->tmpBuff,(uint8_t *)&header,sizeof(frameHeader),1)!=sizeof(frameHeader)) return 0;
 
@@ -406,7 +409,10 @@ uint8_t receiveFrame(serial_line_handle* line, uint8_t frameCode, circular_buffe
         frameHeader tmpHeader;
         uint8_t toBeCut=0; //flag to signal that frame needs to be cut from rxBuff
         uint8_t found=0; //frame found flag
+        //reading header
         if(cBuffRead(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0,0)!=sizeof(frameHeader)) continue;
+        //host ordering header
+        tmpHeader.hash=netToNum16((uint8_t*)&tmpHeader.hash);
         if(line->tmpBuff.elemNum>(SDL_MAX_PAY_LEN+sizeof(frameHeader))) continue;
         if(tmpHeader.code==frameCode){
             //frame found
@@ -455,6 +461,8 @@ uint32_t receiveFrameAndAck(serial_line_handle* line, circular_buffer_handle* rx
         //get header
         frameHeader tmpHeader;
         cBuffPull(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0);
+        //host ordering header
+        tmpHeader.hash=netToNum16((uint8_t*)&tmpHeader.hash);
 
         uint8_t sendAck=1;
         uint32_t len=line->tmpBuff.elemNum;
@@ -493,7 +501,8 @@ uint8_t receiveAck(serial_line_handle* line, uint16_t hash){
         //get header
         frameHeader tmpHeader;
         cBuffPull(&line->tmpBuff,(uint8_t *)&tmpHeader,sizeof(frameHeader),0);
-
+        //host ordering header
+        tmpHeader.hash=netToNum16((uint8_t*)&tmpHeader.hash);
         //check if hash correct
         if(tmpHeader.hash == hash) return 1;
     }

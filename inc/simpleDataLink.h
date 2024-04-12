@@ -54,7 +54,7 @@ typedef struct{
  * to debug the library in a single thread.
  * 
  */
-//#define SDL_DEBUG 
+#define SDL_DEBUG 
 
 /**
  * @brief Struct containing transmission and reception functions of the serial

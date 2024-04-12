@@ -106,7 +106,7 @@ void __sdlTestSendCallback(serial_line_handle* line){
 		}
 	}if(testNum==4){
 		if(line==&line1){
-			printf("Line 2, start sending with ack\n");
+			printf("Line 2, start sending %s with ack\n",pay2);
 			printf("Line 2, sending: %s returned: %u\n",pay2,sdlSend(&line2,(uint8_t*)pay2,sizeof(pay2),1));
 		}else{
 			printf("Line 1, here we should loop line1 sdlSend but we already are inside line1 callback, line2 will timeout\n");
@@ -140,7 +140,7 @@ int main(){
 	printf("Line 2, sending: %s returned: %u\n",dummy,sdlSend(&line2,(uint8_t*)dummy,sizeof(dummy),0));
 
 	//node 1 sends a payload with ack
-	printf("Line 1, start sending with ack\n");
+	printf("Line 1, start sending %s with ack\n",pay1);
 	printf("Line 1, sending: %s returned: %u\n",pay1,sdlSend(&line1,(uint8_t*)pay1,sizeof(pay1),1));
 	//(line 2 receives inside the callback)
 
@@ -151,7 +151,7 @@ int main(){
 	printf("\nTEST %u ------------\n",testNum);
 
 	//node 1 sends a payload with ack
-	printf("Line 1, start sending with ack\n");
+	printf("Line 1, start sending %s with ack\n",pay1);
 	printf("Line 1, sending: %s returned: %u\n",pay1,sdlSend(&line1,(uint8_t*)pay1,sizeof(pay1),1));
 	//(node 2 doesn't receive the first time but only the second one inside the callback)
 
@@ -166,7 +166,7 @@ int main(){
 	printf("Line2, now the buffer is empty!\n");
 	printf("Line2, Rx buffer: "); cBuffPrint(&line2.rxBuff,PRINTBUFF_HEX | PRINTBUFF_NOEMPTY);
 
-	printf("Line 2, start sending with ack\n");
+	printf("Line 2, start sending %s with ack\n",pay2);
 	printf("Line 2, sending: %s returned: %u\n",pay2,sdlSend(&line2,(uint8_t*)pay2,sizeof(pay2),1));
 
 	testNum++;
@@ -179,7 +179,7 @@ int main(){
 	printf("Line 2, sending: %s returned: %u\n",dummy,sdlSend(&line2,(uint8_t*)dummy,sizeof(dummy),0));
 
 	//node 1 sends a payload with ack
-	printf("Line 1, start sending with ack\n");
+	printf("Line 1, start sending %s with ack\n",pay1);
 	printf("Line 1, sending: %s returned: %u\n",pay1,sdlSend(&line1,(uint8_t*)pay1,sizeof(pay1),1));
 	//(line 2 also sends payload with ack inside callback, we cannot simulate line1 so line2 will timeout
 	// but we at least verify that the mechanism works in one direction)
