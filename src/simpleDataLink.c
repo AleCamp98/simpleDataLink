@@ -16,8 +16,6 @@
 #define FRMCODE_DATA 0x00//code for data frame
 #define FRMCODE_ACK 0x01//code for acknowledge frame
 
-//temporary circular buffer to handle tx/rx frame
-circular_buffer_handle tmpBuff;
 //counter used to generate unique hashes for identical frames
 uint16_t hashCnt=0;
 
